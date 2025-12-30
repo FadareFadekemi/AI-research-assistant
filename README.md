@@ -1,6 +1,6 @@
 AI Research & Analysis Assistant
 
-An AI-powered data analysis assistant that allows users to perform descriptive statistics, inferential statistics, and visualizations on any dataset using natural language commands. It integrates with a web app and WhatsApp, delivering actionable insights and downloadable reports.
+An AI-powered research assistant that allows users to perform descriptive statistics, inferential statistics, and visualizations on any dataset using natural language commands. It integrates with a web app and WhatsApp, delivering actionable insights and downloadable reports.
 
 Features
 1. Natural Language Analysis
