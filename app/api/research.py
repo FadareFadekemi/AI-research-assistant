@@ -59,3 +59,5 @@ async def run_research(
         logging.getLogger(__name__).exception("Pipeline failed: %s", e)
         # Return a helpful HTTP 500 with the error message
         raise HTTPException(status_code=500, detail=f"Pipeline run failed: {str(e)}")
+
+

@@ -3,6 +3,7 @@ import feedparser
 import xml.etree.ElementTree as ET
 from typing import List, Dict
 from crewai.tools import tool
+from app.core.llm import get_llm
 
 PUBMED_SEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_FETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -110,4 +111,16 @@ def format_articles_for_agent(raw_articles: List[Dict]) -> List[Dict]:
         })
     return formatted
 
-
+async def _extract_search_keywords(topic: str, findings: str) -> str:
+    """Uses the LLM to distill findings into a high-quality academic search query."""
+    llm = get_llm()
+    prompt = f"""
+    Based on the Research Topic: {topic}
+    And these Analysis Findings: {findings}
+    
+    Generate a single concise search string (max 10 words) for PubMed/ArXiv. 
+    Focus on the technical variables and relationships found. 
+    Output ONLY the search string.
+    """
+    response = await llm.ainvoke(prompt)
+    return response.content.strip().replace('"', '')

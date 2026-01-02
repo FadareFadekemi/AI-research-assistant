@@ -3,157 +3,121 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 from crewai.tools import tool
+from io import BytesIO
 
-
-@tool
-def countplot(
-    data: list[dict] | dict | str,
-    x: str,
-    hue: str | None = None,
-    filename: str = "outputs/plots/countplot.png"
-):
-    """
-    Dumb visualization tool.
-    Expects resolved, valid column names ONLY.
-    """
-
-    if isinstance(data, str):
-        df = pd.read_csv(data) if data.endswith(".csv") else pd.read_excel(data)
-    elif isinstance(data, dict):
-        df = pd.DataFrame([data])
-    else:
-        df = pd.DataFrame(data)
-
-    if x not in df.columns:
-        raise ValueError(f"Column '{x}' not found in dataset")
-
-    if hue and hue not in df.columns:
-        raise ValueError(f"Hue column '{hue}' not found in dataset")
-
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-
-    plt.figure(figsize=(8, 5))
-    sns.countplot(data=df, x=x, hue=hue)
-    plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
-    plt.savefig(filename)
-    plt.close()
-
-    return {
-        "type": "countplot",
-        "x": x,
-        "hue": hue,
-        "file": filename
-    }
-
-
-@tool
-def barplot(
-    data: list[dict] | dict | str,
-    x: str | None = None,
-    y: str | None = None,
-    hue: str | None = None,
-    filename: str = "outputs/plots/barplot.png"
-):
-    """
-    Generate a barplot for one or two columns.
-    Supports optional grouping via `hue`.
-    Accepts list[dict], dict, or CSV/Excel file.
-    Saves plot to disk and returns metadata.
-    """
-
-    # Load data into DataFrame
+def _load_dataframe(data):
     if isinstance(data, str):
         if data.endswith(".csv"):
-            df = pd.read_csv(data)
+            return pd.read_csv(data)
         else:
-            df = pd.read_excel(data)
-    elif isinstance(data, dict):
-        df = pd.DataFrame([data])
+            return pd.read_excel(data)
+    elif isinstance(data, (list, dict)):
+        # Handle list of dicts from records
+        return pd.DataFrame(data)
+    return pd.DataFrame(data)
+
+def _save_or_buffer_plot(filename: str = None) -> dict:
+    """Return metadata and in-memory file if needed."""
+    buffer = None
+    if not filename:
+        buffer = BytesIO()
+        plt.savefig(buffer, format="png")
+        buffer.seek(0)
     else:
-        df = pd.DataFrame(data)
-
-    if df.empty:
-        raise ValueError("barplot received empty data")
-
-    # Resolve columns
-    if not x:
-        raise ValueError("barplot requires 'x' column")
-    if x not in df.columns:
-        raise ValueError(f"X column '{x}' not found in dataset")
-    if y and y not in df.columns:
-        raise ValueError(f"Y column '{y}' not found in dataset")
-    if hue and hue not in df.columns:
-        raise ValueError(f"Hue column '{hue}' not found in dataset")
-
-    # Ensure output directory exists
-    out_dir = os.path.dirname(filename)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-
-    plt.figure(figsize=(8, 5))
-    sns.barplot(data=df, x=x, y=y, hue=hue)
-    plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
-    plt.savefig(filename)
+        out_dir = os.path.dirname(filename)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        plt.savefig(filename)
     plt.close()
-
-    return {
-        "type": "barplot",
-        "x": x,
-        "y": y,
-        "hue": hue,
-        "file": filename
-    }
-
-
+    return buffer
 
 @tool
-def piechart(
-    data: list[dict] | dict | str,
-    column: str | None = None,
-    filename: str = "outputs/plots/piechart.png"
-):
-    """
-    Generate a pie chart for a single categorical column.
-    Accepts list[dict], dict, or CSV/Excel file.
-    Saves plot to disk and returns metadata.
-    """
+def countplot(data: list[dict] | dict | str,
+              x: str,
+              hue: str | None = None,
+              filename: str | None = "outputs/plots/countplot.png"):
+    """Generate a countplot for a categorical variable. Supports 'hue' for comparison."""
+    df = _load_dataframe(data)
+    
+    # Cleaning inputs to match our cleaned dataframe columns
+    x = x.strip() if x else x
+    hue = hue.strip() if hue else None
 
-    # Load data into DataFrame
-    if isinstance(data, str):
-        if data.endswith(".csv"):
-            df = pd.read_csv(data)
-        else:
-            df = pd.read_excel(data)
-    elif isinstance(data, dict):
-        df = pd.DataFrame([data])
-    else:
-        df = pd.DataFrame(data)
+    # Verification logging
+    print(f"DEBUG: Generating Countplot - X: '{x}', Hue: '{hue}'")
 
-    if df.empty:
-        raise ValueError("piechart received empty data")
+    if x not in df.columns:
+        raise ValueError(f"Column '{x}' not found in dataset. Available: {list(df.columns)}")
+    
+    plt.figure(figsize=(10, 6))
+    
+    # Ensure we don't pass hue if it's identical to x (prevents Seaborn errors)
+    actual_hue = hue if (hue and hue in df.columns and hue != x) else None
+    
+    sns.countplot(data=df, x=x, hue=actual_hue)
+    
+    plt.title(f"Distribution of {x}" + (f" by {actual_hue}" if actual_hue else ""))
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    
+    buffer = _save_or_buffer_plot(filename)
+    result = {"type": "countplot", "x": x, "hue": actual_hue}
+    if filename: result["file"] = filename
+    return result
 
-    if not column:
-        raise ValueError("piechart requires a column")
+@tool
+def barplot(data: list[dict] | dict | str,
+            x: str,
+            y: str | None = None,
+            hue: str | None = None,
+            filename: str | None = "outputs/plots/barplot.png"):
+    """Generate a barplot for categorical vs. numerical variable. Supports 'hue'."""
+    df = _load_dataframe(data)
+    
+    x = x.strip() if x else x
+    y = y.strip() if y else None
+    hue = hue.strip() if hue else None
+
+    print(f"DEBUG: Generating Barplot - X: '{x}', Y: '{y}', Hue: '{hue}'")
+
+    if x not in df.columns:
+        raise ValueError(f"X column '{x}' not found.")
+    
+    plt.figure(figsize=(10, 6))
+    
+    actual_hue = hue if (hue and hue in df.columns and hue != x) else None
+    
+    # If no Y is provided, Seaborn barplot needs an estimator or it defaults to count-like behavior
+    sns.barplot(data=df, x=x, y=y, hue=actual_hue)
+    
+    plt.title(f"{y if y else 'Count'} by {x}" + (f" and {actual_hue}" if actual_hue else ""))
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    
+    buffer = _save_or_buffer_plot(filename)
+    result = {"type": "barplot", "x": x, "y": y, "hue": actual_hue}
+    if filename: result["file"] = filename
+    return result
+
+@tool
+def piechart(data: list[dict] | dict | str,
+             column: str,
+             filename: str | None = "outputs/plots/piechart.png"):
+    """Generate a pie chart for a categorical variable."""
+    df = _load_dataframe(data)
+    column = column.strip()
+
     if column not in df.columns:
-        raise ValueError(f"Column '{column}' not found in dataset")
-
-    # Ensure output directory exists
-    out_dir = os.path.dirname(filename)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+        raise ValueError(f"Column '{column}' not found.")
 
     counts = df[column].value_counts()
-    plt.figure(figsize=(6, 6))
+    plt.figure(figsize=(8, 8))
     plt.pie(counts, labels=counts.index, autopct="%1.1f%%", startangle=90)
+    plt.title(f"Proportion of {column}")
     plt.axis("equal")
     plt.tight_layout()
-    plt.savefig(filename)
-    plt.close()
-
-    return {
-        "type": "piechart",
-        "column": column,
-        "file": filename
-    }
+    
+    buffer = _save_or_buffer_plot(filename)
+    result = {"type": "piechart", "column": column}
+    if filename: result["file"] = filename
+    return result

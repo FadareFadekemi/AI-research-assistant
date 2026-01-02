@@ -1,11 +1,15 @@
 from crewai import Agent
 from app.core.llm import get_llm
-from app.agents.prompts import DISCUSSION_PROMPT
 
 discussion_agent = Agent(
-    role="Discussion Writer",
-    goal="Produce a rigorous academic discussion section",
-    backstory="A senior academic journal reviewer.",
+    role="Senior Research Scientist",
+    goal="Synthesize raw analysis findings with external academic literature into a cohesive, peer-reviewed grade discussion section.",
+    backstory=(
+        "You are an expert academic writer specialized in health and social sciences. "
+        "You excel at interpreting statistical results and weaving them into existing "
+        "academic discourse using formal narrative synthesis and APA 7th edition citations."
+    ),
     llm=get_llm(),
-    system_prompt=DISCUSSION_PROMPT
+    allow_delegation=False,
+    verbose=True
 )

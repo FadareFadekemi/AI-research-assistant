@@ -1,112 +1,124 @@
 import re
 import json
-from difflib import SequenceMatcher
+import logging
 from typing import List, Optional, Tuple
 from app.core.llm import get_llm
 
-CONFIDENCE_THRESHOLD = 0.65
+logger = logging.getLogger(__name__)
 llm = get_llm()
 
+# Confidence threshold for matching
+CONFIDENCE_THRESHOLD = 0.65
 
-
-def normalize(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
-
-
-def similarity(a: str, b: str) -> float:
-    return SequenceMatcher(None, a, b).ratio()
-
-
-def extract_candidate_phrases(user_message: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Extracts two possible column phrases from natural language.
-
-    Supports:
-    - compare X with Y
-    - X and Y
-    - X by Y
-    - X vs Y
-    - X across Y
-    """
-    patterns = [
-        r"compare\s+(.*?)\s+(?:with|and)\s+(.*)",
-        r"(.*?)\s+(?:with|and|by|vs|versus|across)\s+(.*)",
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, user_message, re.IGNORECASE)
-        if match:
-            return match.group(1).strip(), match.group(2).strip()
-
-    return None, None
-
-
-def resolve_column_from_phrase(
-    phrase: str,
-    dataset_columns: List[str]
-) -> Tuple[Optional[str], float]:
-
-    if not phrase:
-        return None, 0.0
-
-    phrase_norm = normalize(phrase)
-    best_match, best_score = None, 0.0
-
-    for col in dataset_columns:
-        score = similarity(phrase_norm, normalize(col))
-        if score > best_score:
-            best_match, best_score = col, score
-
-    return best_match, best_score
-
-
-
-async def semantic_column_match(user_phrase: str, dataset_columns: List[str]):
-    prompt = f"""
-You are given dataset columns:
-
-{dataset_columns}
-
-User wants:
-"{user_phrase}"
-
-Return STRICT JSON only:
-{{
-  "best_column": string | null,
-  "confidence": number between 0 and 1
-}}
-
-Rules:
-- Choose only from provided columns
-- Return null if uncertain
-"""
-
-    response = llm.invoke(prompt)
-
-    try:
-        parsed = json.loads(response.content)
-        return parsed.get("best_column"), parsed.get("confidence", 0)
-    except Exception:
-        return None, 0
-
+def aggressive_clean(text: str) -> str:
+    """Removes standard spaces, non-breaking spaces (\xa0), and newlines."""
+    if not text:
+        return ""
+    # Remove \xa0 and other whitespace characters
+    text = re.sub(r'\s+', ' ', text) 
+    return text.strip()
 
 async def resolve_column(
-    phrase: str,
-    columns: List[str],
+    phrase: str, 
+    columns: List[str], 
     threshold: float = CONFIDENCE_THRESHOLD
 ) -> Optional[str]:
-
     if not phrase:
         return None
 
-    # 1️⃣ Lexical
-    col, conf = resolve_column_from_phrase(phrase, columns)
-    if col and conf >= threshold:
-        return col
+    phrase_clean = aggressive_clean(phrase).lower()
+    
+    # 1. Direct match with aggressive cleaning on both sides
+    for col in columns:
+        if phrase_clean == aggressive_clean(col).lower():
+            return col
 
- 
-    sem_col, sem_conf = await semantic_column_match(phrase, columns)
-    if sem_col and sem_conf >= threshold:
-        return sem_col
+    # ... rest of your LLM semantic match code ...
 
+async def extract_candidate_phrases(user_message: str, columns: List[str] = None) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Uses LLM to identify variables in the user's request.
+    Now accepts the column list to ensure it extracts phrases that actually exist.
+    """
+    column_context = f"\nAvailable Columns: {columns}" if columns else ""
+    
+    prompt = f"""
+    Analyze this research request: "{user_message}"
+    {column_context}
+    
+    Task: Identify the specific variables or data columns the user wants to analyze.
+    
+    Rules:
+    1. If the user wants to see ONE variable, set phrase_1 to the variable and phrase_2 to null.
+    2. If comparing/relating TWO variables, set phrase_1 and phrase_2.
+    3. Use the exact wording from the column list if provided.
+    4. Remove action verbs like "plot", "show", "calculate".
+    
+    Return ONLY a JSON object:
+    {{"phrase_1": "string", "phrase_2": "string or null"}}
+    """
+    
+    try:
+        response = await llm.ainvoke(prompt)
+        content = response.content
+        
+        # Clean JSON markdown
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+            
+        parsed = json.loads(content)
+        return parsed.get("phrase_1"), parsed.get("phrase_2")
+    except Exception as e:
+        logger.error(f"LLM Phrase Extraction failed: {e}")
+        return user_message, None
+
+async def resolve_column(
+    phrase: str, 
+    columns: List[str], 
+    threshold: float = CONFIDENCE_THRESHOLD
+) -> Optional[str]:
+    """
+    Matches a natural language phrase to the most likely dataset column.
+    """
+    if not phrase:
+        return None
+
+    # 1. Direct match (case-insensitive)
+    phrase_clean = phrase.strip().lower()
+    for col in columns:
+        if phrase_clean == col.strip().lower():
+            return col
+
+    # 2. Semantic Match
+    prompt = f"""
+    Target Concept: "{phrase}"
+    Available Columns: {columns}
+    
+    Which column from the list BEST matches the target concept? 
+    If no column is a clear match, return null.
+    
+    Return ONLY a JSON object:
+    {{"best_column": "string or null", "confidence": float}}
+    """
+    
+    try:
+        response = await llm.ainvoke(prompt)
+        content = response.content
+        
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+            
+        parsed = json.loads(content)
+        best_col = parsed.get("best_column")
+        confidence = parsed.get("confidence", 0.0)
+        
+        if best_col in columns and confidence >= threshold:
+            return best_col
+    except Exception as e:
+        logger.error(f"Semantic Column Match failed: {e}")
+    
     return None

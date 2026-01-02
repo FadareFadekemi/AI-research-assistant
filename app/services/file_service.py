@@ -4,20 +4,23 @@ import logging
 import pandas as pd
 from fastapi import UploadFile, HTTPException
 from uuid import uuid4
+from io import BytesIO
+
 
 UPLOAD_DIR = "temp_uploads"
 MAX_FILE_SIZE_MB = 50
-
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-import pandas as pd
-from io import BytesIO
+logger = logging.getLogger(__name__)
 
-async def get_dataset_metadata(dataset):
+
+async def get_dataset_metadata(dataset: UploadFile) -> dict | None:
     """
     Returns basic metadata of an uploaded dataset without fully processing it.
+
     Args:
         dataset: UploadFile or similar object with `.read()` and `.filename`
+
     Returns:
         dict: {
             'filename': str,
@@ -29,17 +32,18 @@ async def get_dataset_metadata(dataset):
     if not dataset:
         return None
 
-    # Read the dataset content
+   
     content = await dataset.read()
-    dataset.file.seek(0)  # reset stream pointer
+    dataset.file.seek(0)  
 
-    # Load into DataFrame
+   
     try:
         if dataset.filename.lower().endswith(".csv"):
             df = pd.read_csv(BytesIO(content))
         else:
             df = pd.read_excel(BytesIO(content))
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to read dataset for metadata: %s", e)
         return None
 
     return {
@@ -49,20 +53,24 @@ async def get_dataset_metadata(dataset):
         "columns": list(df.columns)
     }
 
-async def save_and_load_dataset(file: UploadFile) -> tuple[str, pd.DataFrame]:
-    logger = logging.getLogger(__name__)
 
+async def save_and_load_dataset(file: UploadFile) -> tuple[str, pd.DataFrame]:
+    """
+    Save uploaded file to temp folder and load as DataFrame.
+    Supports CSV and Excel (.xls, .xlsx). Handles encoding and engine fallbacks.
+    """
     if getattr(file, "size", None) and file.size > MAX_FILE_SIZE_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large")
 
     ext = (file.filename or "").split(".")[-1].lower()
-    path = f"{UPLOAD_DIR}/{uuid4()}.{ext or 'dat'}"
+    path = os.path.join(UPLOAD_DIR, f"{uuid4()}.{ext or 'dat'}")
 
     with open(path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
     try:
-        # Try parsing with sensible fallbacks
+        
+        df = None
         if ext == "csv":
             try:
                 df = pd.read_csv(path)
@@ -72,18 +80,13 @@ async def save_and_load_dataset(file: UploadFile) -> tuple[str, pd.DataFrame]:
             last_exc = None
             for engine in (None, "openpyxl", "xlrd"):
                 try:
-                    if engine is None:
-                        df = pd.read_excel(path)
-                    else:
-                        df = pd.read_excel(path, engine=engine)
+                    df = pd.read_excel(path, engine=engine)
                     break
                 except Exception as e:
                     last_exc = e
                     continue
-            else:
-                msg = str(last_exc) if last_exc else "Failed to parse Excel file"
-                if "Excel file format cannot be determined" in msg or "engine" in msg.lower():
-                    msg += " — try installing 'openpyxl' (`pip install openpyxl`) for .xlsx files or 'xlrd' for .xls, or save the file as CSV."
+            if df is None:
+                msg = f"Failed to parse Excel file: {last_exc}"
                 raise Exception(msg)
         else:
             # unknown extension: try CSV then Excel
@@ -93,24 +96,19 @@ async def save_and_load_dataset(file: UploadFile) -> tuple[str, pd.DataFrame]:
                 last_exc = None
                 for engine in (None, "openpyxl", "xlrd"):
                     try:
-                        if engine is None:
-                            df = pd.read_excel(path)
-                        else:
-                            df = pd.read_excel(path, engine=engine)
+                        df = pd.read_excel(path, engine=engine)
                         break
                     except Exception as e_xl:
                         last_exc = e_xl
                         continue
                 else:
                     msg = f"Could not parse file as CSV ({e_csv}) or Excel ({last_exc})"
-                    if last_exc and ("Excel file format cannot be determined" in str(last_exc) or "engine" in str(last_exc).lower()):
-                        msg += " — try installing 'openpyxl' (`pip install openpyxl`) for .xlsx files or 'xlrd' for .xls, or save the file as CSV."
                     raise Exception(msg)
     except Exception as e:
         try:
             os.remove(path)
         except Exception:
-            logger.debug("Failed to remove path after parse failure: %s", path, exc_info=True)
+            logger.debug("Failed to remove file after parse failure: %s", path, exc_info=True)
         logger.exception("Failed to parse uploaded dataset %s: %s", file.filename, e)
         raise HTTPException(status_code=400, detail=f"Invalid dataset format: {str(e)}")
 
@@ -118,7 +116,33 @@ async def save_and_load_dataset(file: UploadFile) -> tuple[str, pd.DataFrame]:
         logger.warning("Uploaded dataset parsed but is empty: %s", file.filename)
         raise HTTPException(status_code=400, detail="Dataset is empty")
 
-    # Normalize column names
     df.columns = [str(col) for col in df.columns]
 
     return path, df
+
+
+def export_results_to_excel(results: dict, excel_path: str = "analysis_results.xlsx") -> str:
+    """
+    Export analysis results (dicts/lists) to a multi-sheet Excel workbook.
+
+    Args:
+        results: dictionary of analysis results
+        excel_path: target Excel file path
+
+    Returns:
+        path to generated Excel file
+    """
+    with pd.ExcelWriter(excel_path) as writer:
+        for key, value in results.items():
+            try:
+                if isinstance(value, dict) and "result" in value:
+                    df_out = pd.DataFrame(value["result"])
+                elif isinstance(value, dict):
+                    df_out = pd.DataFrame([value])
+                else:
+                    df_out = pd.DataFrame([value])
+                df_out.to_excel(writer, sheet_name=key[:31], index=False)
+            except Exception as e:
+                logger.warning("Failed to write sheet %s: %s", key, e)
+
+    return excel_path

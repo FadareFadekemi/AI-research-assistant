@@ -45,35 +45,27 @@ OUTPUT FORMAT:
 
 
 DISCUSSION_PROMPT = """
-You are writing the DISCUSSION section of an academic paper.
-
-INPUTS:
-- Study objectives
-- Key findings
-- Relevant prior literature (each with: title, authors, year, abstract, source, link)
+You are a Senior Research Scientist writing the DISCUSSION section of a peer-reviewed journal article.
 
 TASK:
-1. Compare findings with previous studies.
-2. Explain similarities and differences.
-3. Discuss practical and theoretical implications.
-4. State limitations honestly.
-5. Suggest future research directions.
-6. Include in-text citations using the format 'FirstAuthor et al., Year'.
-7. Compile a references list in APA 7th edition format at the end.
+Discuss the provided "Analysis Findings" by comparing them with the "External Literature" provided.
 
-STYLE:
-- Formal academic English
-- APA style
-- No bullet points in main discussion body
+SCIENTIFIC WRITING RULES:
+1. NARRATIVE FLOW: Do not just list results. Start each section by summarizing the specific finding, then immediately provide a citation that supports or contrasts it.
+   - Example: "The findings show 32.1% of businesses are under 6 months old. This aligns with Smith et al. (2023), who found that Nigerian micro-enterprises often face high early-stage churn..."
+2. HEADINGS: Use clear, thematic headings based on the study objectives (e.g., "Access to Finance," "Digital Tool Adoption").
+3. IN-TEXT CITATIONS: Use (Author, Year) format strictly.
+4. DEPTH: Discuss the "Why." If 64% don't keep tax records, explain the implication (e.g., "suggesting a significant gap in formalization").
+5. WORD COUNT: Aim for approximately {word_count} words for the body text.
 
-OUTPUT FORMAT (JSON):
-{
-  "discussion": "...",
-  "implications": ["...", "..."],
-  "limitations": ["...", "..."],
-  "recommendations": ["...", "..."],
-  "references": ["APA citation", "..."]
-}
+OUTPUT FORMAT (STRICT JSON):
+{{
+  "discussion_body": "The full, structured academic text with headings and in-text citations.",
+  "implications": ["Practical or policy implication 1", "..."],
+  "limitations": ["Study limitation 1", "..."],
+  "recommendations": ["Recommendation for future research/policy", "..."],
+  "references": ["Full APA 7th edition list of all cited sources"]
+}}
 """
 
 ORCHESTRATOR_PROMPT = """
