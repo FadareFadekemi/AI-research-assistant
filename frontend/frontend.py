@@ -3,8 +3,8 @@ import requests
 import os
 
 # --- CONFIGURATION ---
-API_URL = "http://localhost:8000/research/run"
-DOWNLOAD_URL = "http://localhost:8000/download"
+API_URL = "https://aira-3eyc.onrender.com/research/run"
+DOWNLOAD_URL = "https://aira-3eyc.onrender.com/download"
 
 st.set_page_config(
     page_title="AIRA | Advanced Research Assistant",
